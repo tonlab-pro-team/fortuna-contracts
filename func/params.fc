@@ -1,0 +1,10 @@
+int workchain() asm "0 PUSHINT";
+
+int nft_base_tons() asm "30000000 PUSHINT"; ;; 0.03 TON
+int prize::coins() asm "0x0e818bd5 PUSHINT";
+int prize::nft() asm "0xd9c7463c PUSHINT";
+
+() force_chain(slice addr) impure {
+  (int wc, _) = parse_std_addr(addr);
+  throw_unless(333, wc == workchain());
+}
