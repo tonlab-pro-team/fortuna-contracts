@@ -1,4 +1,4 @@
-![](assets/fortuna.jpg)
+![](assets/fortuna_logo.png)
 
 # Fortuna lottery contracts
 
