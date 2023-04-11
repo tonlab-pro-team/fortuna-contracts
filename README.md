@@ -1,4 +1,6 @@
-# Fortuna.run TON lottery contracts
+![](assets/fortuna.jpg)
+
+# Fortuna lottery contracts
 
 Этот репозиторий содержит исходный код смарт-контракта лотереи Fortuna
 и объяснение его механизма.
