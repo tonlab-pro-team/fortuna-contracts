@@ -375,3 +375,10 @@ int get_status() method_id {
 
     return (draw_time > now()) ? 0 : -1;
 }
+
+int get_tickets_limit() method_id {
+    var (_, _, _, _, _, coin_prizes, _, _, prize_nfts, _) = load_data();
+    (int nft_prizes_count, _, _) = udict_get_max?(prize_nfts, 16);
+    nft_prizes_count += 1; ;; < last index to count
+    return tickets_limit(coin_prizes, nft_prizes_count);
+}

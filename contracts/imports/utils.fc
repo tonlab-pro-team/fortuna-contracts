@@ -50,7 +50,7 @@ int tickets_limit(int c, int n) method_id {
   return 3645 - c * 20 - n * 35;
 }
 
-int calc_prize_pool(int my_balance, int c, int n, int t) {
+int calc_prize_pool(int my_balance, int c, int n, int t) method_id {
   int draw_fee = draw_base_fee + one_coin_prize_fee * c + one_nft_prize_fee * n + one_ticket_iteration_fee * t;
   ;; nft_message_value * prizes because contract sends all the owner requests at a time. And some responses are coming first.
   int balance_to_distribute = my_balance - minimum_balance - nft_message_value * (1 + c + n) - draw_fee;

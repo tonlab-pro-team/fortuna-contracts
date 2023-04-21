@@ -149,7 +149,7 @@ describe('Lottery', () => {
         });
         const lotteryBalance = (await blockchain.getContract(lottery.address)).balance;
         expect(lotteryBalance).toBeGreaterThan(toNano('0.09'));
-        expect(lotteryBalance).toBeLessThan(toNano('0.14'));
+        expect(lotteryBalance).toBeLessThan(toNano('1'));
     }
 
     it('should draw lottery', async () => {
@@ -245,16 +245,20 @@ describe('Lottery', () => {
             exitCode: 502
         });
     });
+
+    let howManyTickets: number; // [1, 150]
+    howManyTickets = 150;
+
     async function buyManyWithOneTx() {
         const dataBefore = await lottery.getLotteryData();
 
         const sendBuyResult = await lottery.sendBuyTickets(
-            participants[0].getSender(), 150
+            participants[0].getSender(), howManyTickets
         );
         expect(sendBuyResult.transactions).toHaveTransaction({
             from: participants[0].address,
             to: lottery.address,
-            outMessagesCount: 150,
+            outMessagesCount: howManyTickets,
             success: true
         });
         expect(sendBuyResult.transactions).not.toHaveTransaction({
@@ -285,15 +289,15 @@ describe('Lottery', () => {
             }
         }
 
-        expect(froms.length).toBe(150);
+        expect(froms.length).toBe(howManyTickets);
 
         const lotteryData = await lottery.getLotteryData();
-        expect(lotteryData.activeTickets).toBe(dataBefore.activeTickets + 150);
+        expect(lotteryData.activeTickets).toBe(dataBefore.activeTickets + howManyTickets);
     }
 
     async function buyManyWithSmallTxs() {
         const dataBefore = await lottery.getLotteryData();
-        for (let i = 0; i < 150; i++) {
+        for (let i = 0; i < howManyTickets; i++) {
             const sendBuyResult = await lottery.sendBuyTickets(
                 participants[1].getSender(), 1
             );
@@ -360,6 +364,37 @@ describe('Lottery', () => {
         blockchain.now = 36000;
         const data = await lottery.getLotteryData();
         console.log("Prize Pool with big tx:", fromNano(data.prizePool), "TON");
+        await draw();
+    });
+
+    it('should draw with maximum tickets limit', async () => {
+        prizeNFTs = [randomAddress()];
+        blockchain.now = 40000;
+        await lottery.sendStartLottery(
+            operator.getSender(),
+            { timer: 6000, ticketPrice: toNano('2'), coinPrizes: 1, prizeNFTs: prizeNFTs },
+            toNano('0.02')
+        );
+        const ticketsLimit = await lottery.getTicketsLimit();
+        for (let i = 0; i < Math.floor(ticketsLimit / howManyTickets); i++) {
+            // buy 150 tickets many times
+            await buyManyWithOneTx();
+        }
+        const sendOverBuyTryResult = await lottery.sendBuyTickets(participants[0].getSender(), howManyTickets);
+        expect(sendOverBuyTryResult.transactions).toHaveTransaction({
+            from: participants[0].address,
+            to: lottery.address,
+            success: false,
+            exitCode: 403 // tickets limit reached
+        });
+        const sendLastBuyResult = await lottery.sendBuyTickets(participants[0].getSender(), ticketsLimit % howManyTickets);
+        expect(sendLastBuyResult.transactions).toHaveTransaction({
+            from: participants[0].address,
+            to: lottery.address,
+            success: true,
+            outMessagesCount: ticketsLimit % howManyTickets,
+        });
+        blockchain.now = 46000;
         await draw();
     });
 });

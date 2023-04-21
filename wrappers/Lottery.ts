@@ -170,4 +170,9 @@ export class Lottery implements Contract {
               .endCell()
         });
     }
+
+    async getTicketsLimit(provider: ContractProvider) {
+        const { stack } = await provider.get("get_tickets_limit", [])
+        return stack.readNumber();
+    }
 }
