@@ -5,7 +5,7 @@
 ;;
 ;;  Storage
 ;;
-;;  uint64 index
+;;  uint16 index
 ;;  MsgAddressInt collection_address
 ;;  MsgAddressInt owner_address
 ;;  uint32 last_draw_time
@@ -20,7 +20,7 @@ const int minimum_ticket_balance = 25000000;
 
 (int, int, slice, slice, int) load_data() {
     slice ds = get_data().begin_parse();
-    var (index, collection_address) = (ds~load_uint(64), ds~load_msg_addr());
+    var (index, collection_address) = (ds~load_uint(16), ds~load_msg_addr());
     if (ds.slice_bits() > 0) {
       return (-1, index, collection_address, ds~load_msg_addr(), ds~load_uint(32));
     } else {
@@ -31,7 +31,7 @@ const int minimum_ticket_balance = 25000000;
 () store_data(int index, slice collection_address, slice owner_address, int last_draw_time) impure {
     set_data(
         begin_cell()
-            .store_uint(index, 64)
+            .store_uint(index, 16)
             .store_slice(collection_address)
             .store_slice(owner_address)
             .store_uint(last_draw_time, 32)
