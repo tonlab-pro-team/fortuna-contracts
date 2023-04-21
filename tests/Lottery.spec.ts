@@ -15,6 +15,7 @@ export function addrArraysEquals(a: Address[], b: Address[]) {
 }
 
 
+
 describe('Lottery', () => {
     let lotteryCode: Cell;
     let ticketCode: Cell;
@@ -54,7 +55,7 @@ describe('Lottery', () => {
             }, lotteryCode)
         );
 
-        const deployResult = await lottery.sendDeploy(operator.getSender(), toNano('0.05'));
+        const deployResult = await lottery.sendDeploy(operator.getSender(), toNano('0.1'));
 
         expect(deployResult.transactions).toHaveTransaction({
             from: operator.address,
@@ -69,6 +70,7 @@ describe('Lottery', () => {
             const participant = await blockchain.treasury(randomAddress().toString());
             participants.push(participant);
         }
+        
     });
 
     it('should deploy and start lottery', async () => {
@@ -145,6 +147,9 @@ describe('Lottery', () => {
             to: lottery.address,
             success: false
         });
+        const lotteryBalance = (await blockchain.getContract(lottery.address)).balance;
+        expect(lotteryBalance).toBeGreaterThan(toNano('0.09'));
+        expect(lotteryBalance).toBeLessThan(toNano('0.14'));
     }
 
     it('should draw lottery', async () => {
