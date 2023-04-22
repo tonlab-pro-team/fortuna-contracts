@@ -1,0 +1,384 @@
+;;             Fortuna.ton
+;;  Lottery smart contract by TONLab.pro
+;;  Implements NFT Collection Interface
+
+;;
+;;  Storage
+;;
+;;  MsgAddressInt operator_address
+;;
+;;  uint16 total_tickets  (max 65k/3600)
+;;  uint32 draw_time
+;;  Coins price
+;;  uint16 active_tickets
+;;  uint8 coin_prizes  (max 255/245)
+;;
+;;  ^Cell service_wallets -> [MsgAddress drop_address,
+;;                            MsgAddress nft_fund_address]
+;;  ^Cell nft_item_code
+;;  ^Cell prize_nfts: Hashmap(16, MsgAddressInt)
+;;  ^Cell contents
+;;
+
+#include "imports/stdlib.fc";
+#include "imports/op-codes.fc";
+#include "imports/utils.fc";
+
+(slice, int, int, int, int, int, cell, cell, cell, cell) load_data() inline {
+    var ds = get_data().begin_parse();
+    return (
+        ds~load_msg_addr(), ;; operator_address
+        ds~load_uint(16),     ;; total_tickets
+        ds~load_uint(32),    ;; draw_time
+        ds~load_grams(),   ;; price
+        ds~load_uint(16), ;; active_tickets
+        ds~load_uint(8), ;; coin_prizes
+        ds~load_ref(), ;; service_wallets
+        ds~load_ref(), ;; nft_item_code
+        ds~load_dict(), ;; prize_nfts
+        ds~load_ref() ;; contents
+    );
+}
+
+() save_data(slice operator_address, int total_tickets, int draw_time, int price, int active_tickets, int coin_prizes, cell service_wallets, cell nft_item_code, cell prize_nfts, cell contents) impure inline {
+    set_data(begin_cell()
+        .store_slice(operator_address)
+        .store_uint(total_tickets, 16)
+        .store_uint(draw_time, 32)
+        .store_grams(price)
+        .store_uint(active_tickets, 16)
+        .store_uint(coin_prizes, 8)
+        .store_ref(service_wallets)
+        .store_ref(nft_item_code)
+        .store_dict(prize_nfts)
+        .store_ref(contents)
+        .end_cell());
+}
+
+
+() transfer_nft_ticket(slice new_owner, int item_index, cell nft_item_code, int draw_time, int query_id, int amount) impure {
+    cell state_init = calculate_nft_item_state_init(item_index, nft_item_code);
+    slice nft_address = calculate_nft_item_address(workchain, state_init);
+    var msg = begin_cell()
+              .store_uint(0x18, 6)
+              .store_slice(nft_address)
+              .store_coins(amount)
+              .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+              .store_uint(op::transfer, 32)
+              .store_uint(query_id, 64)
+              .store_slice(new_owner)
+              .store_uint(draw_time, 32);
+
+    send_raw_message(msg.end_cell(), 0);
+}
+
+
+() draw_lottery(int active_tickets, int total_prizes, int coin_prizes, int prize_pool, int nft_prizes_count, cell prize_nfts, cell nft_item_code, int msg_hash) impure {
+    var hash = cell_hash( ;; for random seed
+      begin_cell()
+        .store_uint(msg_hash, 256)
+        .store_uint(now(), 64)
+        .end_cell()
+    );
+
+    randomize(hash);
+    randomize_lt();
+
+    prize_nfts~shuffle_dict(16, nft_prizes_count);
+
+    int query_id = now();
+
+    int jackpot = 1;
+    int i = 0;
+    int left = active_tickets;
+    int small_prize = prize_pool / coin_prizes / 2;
+
+    while (total_prizes > 0) {
+        int r = rand(left);
+        if (r < total_prizes) {
+            ;; now i - win ticket index
+            cell state_init = calculate_nft_item_state_init(i, nft_item_code);
+            slice ticket_address = calculate_nft_item_address(workchain, state_init);
+
+            builder msg = begin_cell()
+                       .store_uint(0x18, 6)
+                       .store_slice(ticket_address)
+                       .store_coins(nft_message_value)
+                       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+                       .store_uint(op::owner_request, 32)
+                       .store_uint(query_id, 64);
+
+            builder prize = begin_cell();
+
+            int p = rand(total_prizes); ;; choose prize type
+
+            if (p < jackpot) { ;; half, jackpot
+                jackpot -= 1;
+
+                prize~store_uint(prize::coins, 32);
+                prize = prize.store_coins(prize_pool / 2);
+            }
+
+            elseif (p < jackpot + coin_prizes) { ;; coin prize
+                coin_prizes -= 1;
+
+                prize~store_uint(prize::coins, 32);
+                prize = prize.store_coins(small_prize);
+            }
+
+            else { ;; nft prize
+                nft_prizes_count -= 1;
+
+                ;; yes it is in reverse order, what's the difference
+                (slice prize_nft_address, int success) = udict_get?(prize_nfts, 16, nft_prizes_count);
+
+                prize~store_uint(prize::nft, 32);
+                prize = prize.store_slice(prize_nft_address);
+            }
+
+            msg = msg.store_ref(prize.end_cell());
+            send_raw_message(msg.end_cell(), 0);
+
+            total_prizes -= 1;
+        }
+        i += 1;
+        left -= 1;
+    }
+}
+
+
+
+;; ------ Main (user) error codes: -------
+;; 401 - lottery is not active
+;; 402 - tickets amount to buy is higher than actions limit
+;; 403 - tickets limit by gas needed to draw the lottery
+;; 404 - the amount of coins does not match ticket price
+
+;; ----- Operator only error codes: ------
+;; 501 - message not from the operator
+;; 502 - lottery is already active
+;; 503 - timer seconds less than 1 hour
+;; 504 - nfts limit by gas for dict operations
+;; 505 - prizes configuration is out of the tickets limit by gas
+
+;; ----- Ticket actions error codes: -----
+;; 301 - message not from the ticket
+;; 302 - unknown prize type
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    slice cs = in_msg_full.begin_parse();
+    var msg_hash = slice_hash(cs);
+
+    int flags = cs~load_uint(4);
+    if (flags & 1) { ;; ignore bounced
+        return ();
+    }
+
+    slice sender_address = cs~load_msg_addr();
+
+    var (operator_address, total_tickets, draw_time, price, active_tickets, coin_prizes, service_wallets, nft_item_code, prize_nfts, contents) = load_data();
+
+    int op = 0;
+    if (~ in_msg_body.slice_empty?()) {
+        op = in_msg_body~load_uint(32);
+    }
+
+    if (op == op::ownership_assigned) {
+        return (); ;; receiving an NFT
+    }
+
+    if (op == 0) {
+        if (equal_slices(sender_address, operator_address)) {
+            return (); ;; topup
+        }
+
+        throw_if(401, draw_time == 0); ;; lottery is not active
+
+        if (now() >= draw_time) { ;; try drawing a lottery
+            (int nft_prizes_count, _, _) = udict_get_max?(prize_nfts, 16);
+            nft_prizes_count += 1; ;; last index to count
+
+            int total_prizes = 1 + coin_prizes + nft_prizes_count;
+
+            builder return_msg = message_builder(sender_address, msg_value);
+
+            if (active_tickets >= total_prizes) {
+                my_balance -= msg_value;
+                int prize_pool = calc_prize_pool(my_balance, coin_prizes, nft_prizes_count, active_tickets);
+
+                topup_service_wallets(service_wallets, prize_pool); ;; topup with a half
+                draw_lottery(active_tickets, total_prizes, coin_prizes, prize_pool, nft_prizes_count, prize_nfts, nft_item_code, msg_hash);
+                save_data(operator_address, total_tickets, 0, 0, 0, 0, service_wallets, nft_item_code, null(), contents);
+
+                return_msg = return_msg.store_slice("Successfully drawn");
+            }
+            else {
+                ;; if not enough tickets to draw then increasing draw time by 2h
+                save_data(operator_address, total_tickets, now() + 7200, price, active_tickets, coin_prizes, service_wallets, nft_item_code, prize_nfts, contents);
+                return_msg = return_msg.store_slice("Not enough tickets! Draw time was increased by 2h");
+            }
+            send_raw_message(return_msg.end_cell(), 0);
+            return ();
+        } 
+
+        ;; buying tickets
+        (int tickets_to_proceed, int remainder) = msg_value /% price; ;; divmod
+
+        if (remainder == 0) {
+            throw_unless(402, tickets_to_proceed <= 250); ;; too many tickets
+
+            (int nft_prizes_count, _, _) = udict_get_max?(prize_nfts, 16);
+            nft_prizes_count += 1;
+            throw_unless(403, tickets_to_proceed + active_tickets <= tickets_limit(coin_prizes, nft_prizes_count));
+
+            int query_id = now();
+            
+            while (tickets_to_proceed > 0) {
+                if (active_tickets == total_tickets) {
+                    deploy_nft_item(total_tickets, nft_item_code, draw_time, nft_message_value, sender_address);
+                    total_tickets += 1;
+                } else {
+                    ;; every user gets the same amount on coins after receiving the ticket, so deploy_ticket_fee will be in prize pool
+                    transfer_nft_ticket(sender_address, active_tickets, nft_item_code, draw_time, query_id, nft_message_value - deploy_ticket_fee);
+                }
+                active_tickets += 1;
+                tickets_to_proceed -= 1;
+            }
+            save_data(operator_address, total_tickets, draw_time, price, active_tickets, coin_prizes, service_wallets, nft_item_code, prize_nfts, contents);
+            return();
+        } else {
+            throw(404); ;; wrong amount of coins
+            return ();
+        }
+    }
+
+    int query_id = in_msg_body~load_uint(64);
+
+    if (op == op::owner_response) {
+        int item_index = in_msg_body~load_uint(64);
+
+        cell state_init = calculate_nft_item_state_init(item_index, nft_item_code);
+        slice nft_address = calculate_nft_item_address(workchain, state_init);
+
+        throw_unless(301, equal_slices(sender_address, nft_address)); ;; wrong nft address
+
+        slice winner_address = in_msg_body~load_msg_addr();
+        cell prize = in_msg_body~load_ref();
+        slice ps = prize.begin_parse();
+
+        int prize_type = ps~load_uint(32);
+
+        if (prize_type == prize::coins) {
+            int prize_value = ps~load_coins();
+            send_raw_message(message_builder(winner_address, prize_value).end_cell(), 64);
+            return ();
+        } elseif (prize_type == prize::nft) {
+            slice prize_nft_address = ps~load_msg_addr();
+            cell msg = begin_cell()
+                        .store_uint(0x10, 6)
+                        .store_slice(prize_nft_address)
+                        .store_coins(0)
+                        .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+                        .store_ref(begin_cell()
+                            .store_uint(op::transfer, 32)
+                            .store_uint(query_id, 64)
+                            .store_slice(winner_address) ;; dst
+                            .store_slice(winner_address) ;; response
+                            .store_uint(0, 1) ;; null custom payload
+                            .store_grams(0) ;; forward amount
+                            .store_uint(0, 1) ;; no forward
+                           .end_cell())
+                       .end_cell();
+            send_raw_message(msg, 64);
+            return ();
+        } else {
+            throw(302); ;; unknown prize type
+            return ();
+        }
+    }
+
+    throw_unless(501, equal_slices(sender_address, operator_address));
+
+    if (op == op::start) { ;; start of the new lottery
+        throw_unless(502, draw_time == 0);
+        int timer = in_msg_body~load_uint(32);
+        throw_if(503, timer < 3600); ;; minimum 1 hour
+        int new_draw_time = timer + now();
+        int new_price = in_msg_body~load_grams();
+        int new_coin_prizes = in_msg_body~load_uint(16);
+        cell new_prize_nfts = in_msg_body~load_dict();
+
+        (int new_nft_count, _, _) = udict_get_max?(new_prize_nfts, 16);
+        new_nft_count += 1; ;; last index to count
+        throw_unless(504, new_nft_count <= 59);
+        int total_prizes = 1 + new_coin_prizes + new_nft_count;
+        throw_unless(505, total_prizes <= tickets_limit(new_coin_prizes, new_nft_count));
+
+        save_data(operator_address, total_tickets, new_draw_time, new_price, active_tickets, new_coin_prizes, service_wallets, nft_item_code, new_prize_nfts, contents);
+        return ();
+    }
+
+    if (op == 4) { ;; change content
+        in_msg_body~skip_bits(64); ;; query_id
+        save_data(operator_address, total_tickets, draw_time, price, active_tickets, coin_prizes, service_wallets, nft_item_code, prize_nfts, in_msg_body~load_ref());
+        return ();
+    }
+
+    throw(0xffff);
+}
+
+;;
+;;  GET Methods
+;;
+
+(int, cell, slice) get_collection_data() method_id {
+    var (operator_address, total_tickets, _, _, _, _, _, _, _, contents) = load_data();
+    slice cs = contents.begin_parse();
+    return (total_tickets, cs~load_ref(), operator_address);
+}
+
+cell get_nft_content(int index, cell individual_nft_content) method_id {
+    var (_, _, _, _, _, _, _, _, _, contents) = load_data();
+    slice cs = contents.begin_parse();
+    cs~load_ref(); ;; skip collection content
+    slice common_content = cs~load_ref().begin_parse();
+    return (begin_cell()
+              .store_uint(1, 8) ;; offchain tag
+              .store_slice(common_content)
+              .store_slice(individual_nft_content.begin_parse())
+            .end_cell());
+}
+
+slice get_nft_address_by_index(int index) method_id {
+    var (_, _, _, _, _, _, _, nft_item_code, _, _) = load_data();
+    cell state_init = calculate_nft_item_state_init(index, nft_item_code);
+    return calculate_nft_item_address(workchain, state_init);
+}
+
+(int, int, int, int, int, cell) get_lottery_data() method_id {
+    var (_, _, draw_time, price, active_tickets, coin_prizes, _, _, prize_nfts, _) = load_data();
+    int prize_pool = 0;
+    if (draw_time != 0) { ;; lottery is active, calculate the prize pool >
+        (int nft_prizes_count, _, _) = udict_get_max?(prize_nfts, 16);
+        nft_prizes_count += 1; ;; < last index to count
+
+        prize_pool = calc_prize_pool(get_balance().pair_first(), coin_prizes, nft_prizes_count, active_tickets);
+    }
+    return (draw_time, price, prize_pool, active_tickets, coin_prizes, prize_nfts);
+}
+
+int get_status() method_id {
+    var (_, _, draw_time, _, _, _, _, _, _, _) = load_data();
+
+    if (draw_time == 0) {
+        return 0;
+    }
+
+    return (draw_time > now()) ? 0 : -1;
+}
+
+int get_tickets_limit() method_id {
+    var (_, _, _, _, _, coin_prizes, _, _, prize_nfts, _) = load_data();
+    (int nft_prizes_count, _, _) = udict_get_max?(prize_nfts, 16);
+    nft_prizes_count += 1; ;; < last index to count
+    return tickets_limit(coin_prizes, nft_prizes_count);
+}

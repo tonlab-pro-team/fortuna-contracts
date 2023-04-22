@@ -1,0 +1,115 @@
+const int workchain = 0;
+
+const int prize::coins = 0x0e818bd5;
+const int prize::nft = 0xd9c7463c;
+
+const int nft_message_value = 52000000; ;; 0.052 TON
+
+;; Calculated fees
+const int deploy_ticket_fee = 40780000; ;; 0.0.04078 TON
+
+const int draw_base_fee = 16000000; ;; 0.016 TON
+const int one_coin_prize_fee = 5500000; ;; 0.0055 TON
+const int one_nft_prize_fee = 9500000; ;; 0.0095 TON
+const int one_ticket_iteration_fee = 270000; ;; 0.00027 TON
+
+const int minimum_balance = 100000000; ;; 0.1 TON
+
+slice to_string(int n) {
+  builder b = begin_cell();
+  tuple chars = null();
+  do {
+    int r = n~divmod(10);
+    chars = cons(r + "0"u, chars);
+  } until (n == 0);
+  do {
+    int char = chars~list_next();
+    b~store_uint(char, 8);
+  } until (null?(chars));
+  return b.end_cell().begin_parse();
+}
+
+(cell, ()) shuffle_dict(cell dict, int key_len, int dict_size) impure {
+  ;; replace each element with a random one
+  ;; usage: ex_dict~shuffle_dict(32, 10)
+  int i = 0;
+  while (i < dict_size) {
+    int r = rand(dict_size); ;; in [0, dict_size-1] (random index)
+    (slice old_value, _) = udict_get?(dict, key_len, i); ;; old value of i-th element
+    (slice new_value, _) = udict_get?(dict, key_len, r);
+    dict~udict_set(key_len, i, new_value);
+    dict~udict_set(key_len, r, old_value);
+    i += 1;
+  }
+  return (dict, ());
+}
+
+int tickets_limit(int c, int n) method_id {
+  ;; around 3600 is how many tickets is possible to
+  ;; draw with 1 coin and 1 nft prize to fit in 1 TON gas limit
+  return 3645 - c * 20 - n * 35;
+}
+
+int calc_prize_pool(int my_balance, int c, int n, int t) method_id {
+  int draw_fee = draw_base_fee + one_coin_prize_fee * c + one_nft_prize_fee * n + one_ticket_iteration_fee * t;
+  ;; nft_message_value * prizes because contract sends all the owner requests at a time. And some responses are coming first.
+  int balance_to_distribute = my_balance - minimum_balance - nft_message_value * (1 + c + n) - draw_fee;
+
+  return (balance_to_distribute > 0) ? balance_to_distribute / 2 : 0;
+}
+
+builder message_builder(slice dst, int amount) {
+  return begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(dst)
+        .store_coins(amount)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_uint(0, 32); ;; empty
+}
+
+() topup_service_wallets(cell service_wallets, int amount) impure {
+  slice as = service_wallets.begin_parse();
+  (slice addr_a, slice addr_b) = (as~load_msg_addr(), as~load_msg_addr());
+
+  send_raw_message(message_builder(addr_a, amount / 2).end_cell(), 0);
+  send_raw_message(message_builder(addr_b, amount / 2).end_cell(), 0);
+}
+
+cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
+  cell data = begin_cell().store_uint(item_index, 16).store_slice(my_address()).end_cell();
+  return begin_cell().store_uint(0, 2).store_dict(nft_item_code).store_dict(data).store_uint(0, 1).end_cell();
+}
+
+slice calculate_nft_item_address(int wc, cell state_init) {
+  return begin_cell().store_uint(4, 3)
+                     .store_int(wc, 8)
+                     .store_uint(cell_hash(state_init), 256)
+                     .end_cell()
+                     .begin_parse();
+}
+
+() deploy_nft_item(int item_index, cell nft_item_code, int draw_time, int amount, slice owner_address) impure {
+  cell state_init = calculate_nft_item_state_init(item_index, nft_item_code);
+  slice nft_address = calculate_nft_item_address(workchain, state_init);
+
+  cell body = begin_cell()
+                      .store_slice(owner_address)
+                      .store_uint(draw_time, 32)
+                     .end_cell();
+
+  var msg = begin_cell()
+            .store_uint(0x18, 6)
+            .store_slice(nft_address)
+            .store_coins(amount)
+            .store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+            .store_ref(state_init)
+            .store_ref(body);
+
+  send_raw_message(msg.end_cell(), 0);
+}
+
+() force_chain(slice addr) impure {
+  (int wc, _) = parse_std_addr(addr);
+  throw_unless(333, wc == workchain);
+}
+
