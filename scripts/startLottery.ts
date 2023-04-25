@@ -30,6 +30,10 @@ export async function run(provider: NetworkProvider, args: string[]) {
 
     if (args.length === 1 || args[1] !== 'default') {
         startConfig.timer = Number(args.length > 1 ? args[1] : await ui.input('Timer'));
+        if (startConfig.timer > Date.now() / 1000) { // if draw timestamp instead of timer
+            startConfig.timer = Math.round(startConfig.timer - Date.now() / 1000);
+            ui.write(`Timer set to ${startConfig.timer} seconds`);
+        }
         startConfig.ticketPrice = toNano(args.length > 2 ? args[2] : await ui.input('Ticket price'));
         startConfig.coinPrizes = Number(args.length > 3 ? args[3] : await ui.input('Coin prizes'));
         startConfig.prizeNFTs = (args.length > 3 ? args[3] : await ui.input('NFT prize addresses (separrated by comma)')).split(',').map((addr) => Address.parse(addr));
