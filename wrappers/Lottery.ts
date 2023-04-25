@@ -93,6 +93,10 @@ export class Lottery implements Contract {
         return new Lottery(contractAddress(workchain, init), init);
     }
 
+    static createData(config: LotteryConfig) {
+        return lotteryConfigToCell(config);
+    }
+
     async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
         await provider.internal(via, {
             value,
