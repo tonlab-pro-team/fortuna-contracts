@@ -103,7 +103,7 @@ const int minimum_ticket_balance = 25000000;
                        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
                        .store_uint(op::owner_response, 32)
                        .store_uint(query_id, 64)
-                       .store_uint(index, 64)
+                       .store_uint(index, 16)
                        .store_slice(owner_address)
                        .store_ref(prize)
                       .end_cell();

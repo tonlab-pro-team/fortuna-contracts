@@ -254,7 +254,7 @@
     int query_id = in_msg_body~load_uint(64);
 
     if (op == op::owner_response) {
-        int item_index = in_msg_body~load_uint(64);
+        int item_index = in_msg_body~load_uint(16);
 
         cell state_init = calculate_nft_item_state_init(item_index, nft_item_code);
         slice nft_address = calculate_nft_item_address(workchain, state_init);
