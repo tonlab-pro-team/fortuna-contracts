@@ -9,7 +9,7 @@
 
 
 ## Ползеные ссылки
-- [Контракт в mainnet:](https://tonscan.org/address/EQC99PIzaZQNWZA26HchUo0twvCs-JB8W6cZ6c-sne6J4DgK) `EQC99PIzaZQNWZA26HchUo0twvCs-JB8W6cZ6c-sne6J4DgK`
+- [Контракт в mainnet:](https://tonscan.org/address/EQA--JhKKuYfb-WAw7vDWEfD4fg2WOt9AuLH6xHPvF0RTUNA) `EQA--JhKKuYfb-WAw7vDWEfD4fg2WOt9AuLH6xHPvF0RTUNA`
 - [Fortuna.run - интерфейс для общения с контрактом](https://fortuna.run)
 - [NFT Web3TON - коллекция, холдеры которой получают доход с лотереи](https://web3ton.pro)
 - [NFT Web3TON на GetGems](https://getgems.io/collection/EQCdVlYKvCuUaVIWjwlGtQgWvDa8DsbCNEM6hHevSW__-07R)

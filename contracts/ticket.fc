@@ -113,8 +113,7 @@ const int minimum_ticket_balance = 25000000;
         }
         throw(0xffff);
     } 
-    ;; ticket stays in the wallet because of some indexing systems (Tonkeeeepeer),
-    ;; so owner can immitate the transfer to remove it from the app like an nft
+    ;; ticket stays in the wallet, so owner can immitate the transfer
     throw_unless(405, init?);
     throw_unless(401, equal_slices(sender_address, owner_address));
     throw_unless(499, last_draw_time < now());
